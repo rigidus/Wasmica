@@ -1,0 +1,25 @@
+#+STARTUP: showall indent hidestars
+
+#+TITLE: WebAssembly Lightweight Virtual Machine
+
+* Intro
+
+In this project, I implement an interpreter and JIT compiler for WebAssembly (Wasm) in C in a literate programming style, documenting and explaining the code as I write it.
+
+I will start with the basic functionality and gradually add new features such as WASI support, debugging, and optimizations.
+
+The goal of this document is to create a clear project roadmap that will serve both for implementation and maintenance.
+
+We will start with the overall structure and then dive into the details of each component.
+
+* Project Structure
+
+The project consists of several key components, each responsible for its own part of working with WebAssembly:
+- Wasm Parser - parses bytecode and builds an internal representation.
+- Interpreter - executes Wasm code step by step.
+- JIT compiler - speeds up execution through dynamic compilation.
+- Runtime - manages memory and interaction with the host system.
+- Debugging and profiling - provides tools for analyzing and fixing errors.
+- REPL - an interactive shell for testing and debugging.
+
+Each component is described in its own section to add code gradually while maintaining the overall picture of the project.
