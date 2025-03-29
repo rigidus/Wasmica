@@ -1,0 +1,91 @@
+#+STARTUP: showall indent hidestars
+
+#+TITLE: Wasmico Parser
+
+The parser is responsible for parsing Wasm bytecode and building an internal representation of the module, which is then used by other parts of the system such as the interpreter, JIT compiler, and runtime.
+
+* The parser's external interface
+
+These functions and types are used by the external code and make up the parser interface:
+
+Functions:
+- ~ParseModule~: The main function for parsing Wasm bytecode into a Module structure.
+- ~LoadModule~: Loads the module into the runtime, initializing memory, global variables, and other components.
+
+Types:
+- ~Module~: A structure containing parsed module data such as functions, global variables, tables, and memory.
+- ~FuncType~: Description of the function type (parameters and return values).
+- ~GlobalType~: Global variable type (value and modifiability).
+- ~TableType~: Type of table (for example, for storing pointers to functions).
+- ~MemoryType~: Type of linear memory (minimum and maximum size).
+
+* Internal parser components
+
+These functions and types are only used internally within the parser and can be encapsulated:
+
+Functions:
+
+- ~ReadLebUnsigned~: Reads an unsigned LEB128-unsigned number from bytecode.
+- ~ReadLebSigned~: Reads a signed LEB128 number from bytecode.
+- ~ParseSection~: Processes an individual module section (e.g., a code section).
+- ~ParseFunctionSection~: Parses a function section.
+- ~ParseCodeSection~: Parses a code section.
+- ~ParseGlobalSection~: Parses the global variables section.
+- ~ParseTableSection~: Parses the table section.
+- ~ParseMemorySection~: Parses the memory section.
+- ~ParseExportSection~: Parses the exports section.
+- ~ParseImportSection~: Parses the imports section.
+- ~ParseDataSection~: Parses the data section.
+- ~ParseElementSection~: Parses the element section.
+
+Types:
+
+~Section~: An internal structure for representing module sections.
+~Instruction~: A structure for representing Wasm instructions.
+
+* Sequence of calls when parsing a Wasm file
+
+- Reading the file:
+  - External code (such as main.c) reads the Wasm file into memory.
+- ~ParseModule~ call:
+  - ~ParseModule~ initializes the ~Module~ structure.
+  - Then calls ~ParseSection~ for each section in the bytecode.
+- Section Parsing:
+  - ~ParseSection~ determines the type of section and calls the appropriate function:
+  - ~ParseFunctionSection~ for a function section.
+  - ~ParseCodeSection~ for the code section.
+  - ~ParseGlobalSection~ for the global variables section.
+  - etc.
+- Section data processing:
+  - Each section parsing function (such as ~ParseFunctionSection~) reads the section data, using ~ReadLebUnsigned~ and ~ReadLebSigned~ to decode the numbers.
+  - The data is stored in the appropriate fields of the ~Module~ structure.
+- Completing the parsing:
+  - After all sections have been processed, ~ParseModule~ returns a completed ~Module~ structure.
+  - Loading Module:
+    - The external code calls ~LoadModule~, passing ~Module~ and ~Runtime~.
+    - ~LoadModule~ initializes the runtime with data from ~Module~, such as memory, global variables, and tables.
+
+* Formation of data structures
+
+The parser generates the following key data structures:
+
+- ~Module~: Contains arrays of functions, global variables, tables, memory, etc.
+  Each function is represented as a ~Function~, containing a ~FuncType~ and bytecode.
+- ~FuncType~: Describes the function signature: parameters and return values.
+- ~GlobalType~: Describes the global variable: its type and modifiability.
+- ~TableType~: Describes a table: its element type and size.
+- ~MemoryType~: Describes linear memory: minimum and maximum size.
+
+These structures are used by external code to execute the module, such as function calls or memory accesses.
+
+* External interface:
+
+~ParseModule~ and ~LoadModule~ must be accessible to external code.
+
+The types ~Module~, ~FuncType~, ~GlobalType~, ~TableType~, ~MemoryType~ should also be visible as they are used to interact with the module.
+
+* Internal components:
+
+Section parsing functions (~ParseFunctionSection~, ~ParseCodeSection~, etc.) can be encapsulated since they are only called from ParseSection.
+
+Utility functions (~ReadLebUnsigned~, ~ReadLebSigned~) can also be hidden as they are used only inside the parser.
