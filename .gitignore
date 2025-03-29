@@ -1,0 +1,8 @@
+# Ignore test build and log directoryes
+./tests/build/*
+./tests/logs/*
+
+# Ignore test tangled files
+./tests/*.wat
+./tests/Makefile
+./tests/run_tests.sh
