@@ -1,0 +1,222 @@
+#+STARTUP: showall indent hidestars
+
+#+TITLE: Wasmico Parser Test
+
+To test the wasm file parser I wrote a small test framework that creates simple wasm files from wat files and uses them as tests
+
+* Introduction
+
+This document contains test cases for the WebAssembly parser. It follows the literate programming approach:
+- WAT (WebAssembly Text) files are defined in org-mode code blocks
+- A Makefile automates the conversion from WAT to WASM
+- The parser is run against each WASM file to verify it doesn't crash
+
+* Test Cases
+
+** Minimal wasm file
+
+The simplest possible module with one empty function.
+
+#+BEGIN_SRC lisp :tangle parser-test/simple.wat
+(module
+  ;; Declaring a function type without parameters and without return value
+  (type $t0 (func))
+
+  ;; Defining a function with the above type
+  (func $empty (type $t0))
+
+  ;; Exporting a function named "empty"
+  (export "empty" (func $empty))
+)
+#+END_SRC
+
+** Simple addition test
+
+A module with a function that adds two integers.
+
+#+BEGIN_SRC lisp :tangle parser-test/addition.wat
+(module
+  ;; Function type with two parameters i32 and result i32
+  (type $t0 (func (param i32 i32) (result i32)))
+
+  ;; The function of adding two numbers
+  (func $add (type $t0) (param $p0 i32) (param $p1 i32) (result i32)
+    local.get $p0
+    local.get $p1
+    i32.add)
+
+  ;; Exporting a function named "add"
+  (export "add" (func $add))
+)
+#+END_SRC
+
+** Multiple data types
+
+Testing different WebAssembly value types.
+
+#+BEGIN_SRC lisp :tangle parser-test/multi_types.wat
+(module
+  (type $t0 (func (param i32) (result i32)))
+  (type $t1 (func (param i64) (result i64)))
+  (type $t2 (func (param f32) (result f32)))
+  (type $t3 (func (param f64) (result f64)))
+
+  (func $i32_identity (type $t0) (param $p i32) (result i32)
+    local.get $p)
+  (func $i64_identity (type $t1) (param $p i64) (result i64)
+    local.get $p)
+  (func $f32_identity (type $t2) (param $p f32) (result f32)
+    local.get $p)
+  (func $f64_identity (type $t3) (param $p f64) (result f64)
+    local.get $p)
+
+  (export "i32_id" (func $i32_identity))
+  (export "i64_id" (func $i64_identity))
+  (export "f32_id" (func $f32_identity))
+  (export "f64_id" (func $f64_identity))
+)
+#+END_SRC
+
+** Global variables
+
+Testing global variables declaration and use.
+
+#+BEGIN_SRC lisp :tangle parser-test/global.wat
+(module
+  (global $g (mut i32) (i32.const 42))
+  (func $get_global (result i32)
+    global.get $g)
+  (func $set_global (param i32)
+    local.get 0
+    global.set $g)
+  (export "get" (func $get_global))
+  (export "set" (func $set_global))
+)
+#+END_SRC
+
+** Memory operations
+
+Testing memory operations.
+
+#+BEGIN_SRC lisp :tangle parser-test/memory.wat
+(module
+  (memory 1)
+  (func $store (param $addr i32) (param $value i32)
+    local.get $addr
+    local.get $value
+    i32.store)
+  (func $load (param $addr i32) (result i32)
+    local.get $addr
+    i32.load)
+  (export "store" (func $store))
+  (export "load" (func $load))
+)
+#+END_SRC
+
+* Automation
+
+** Makefile
+
+The Makefile to automate the testing process.
+
+#+BEGIN_SRC makefile :tangle parser-test/Makefile
+# Makefile for WASM parser testing
+
+# Tools
+WAT2WASM = wat2wasm
+PARSER = ../parser
+
+# Files
+WAT_FILES = $(wildcard *.wat)
+WASM_FILES = $(WAT_FILES:.wat=.wasm)
+
+# Colors for output
+GREEN = \033[0;32m
+RED = \033[0;31m
+NC = \033[0m # No Color
+
+.PHONY: all clean test
+
+# Default target: run all tests
+all: test
+
+# Convert all WAT files to WASM files
+$(WASM_FILES): %.wasm: %.wat
+	@echo "Converting $< to $@..."
+	@$(WAT2WASM) $< -o $@
+
+# Run the parser on all WASM files
+test: $(WASM_FILES)
+	@echo "\nRunning parser tests..."
+	@success=true; \
+	for wasm in $(WASM_FILES); do \
+		echo -n "Testing $$wasm: "; \
+		if $(PARSER) $$wasm > /dev/null 2>&1; then \
+			echo -e "$(GREEN)PASS$(NC)"; \
+		else \
+			echo -e "$(RED)FAIL$(NC) (return code: $$?)"; \
+			success=false; \
+		fi; \
+	done; \
+	if $$success; then \
+		echo -e "\n$(GREEN)All tests passed!$(NC)"; \
+		exit 0; \
+	else \
+		echo -e "\n$(RED)Some tests failed.$(NC)"; \
+		exit 1; \
+	fi
+
+# Clean generated files
+clean:
+	rm -f *.wasm
+	rm -f *.log
+
+# Generate hand-crafted minimal WASM
+minimal:
+	@echo "Creating hand-crafted minimal WASM file..."
+	@printf "\x00\x61\x73\x6D\x01\x00\x00\x00" > minimal_handcrafted.wasm
+	@echo "Created minimal_handcrafted.wasm"
+#+END_SRC
+
+** Run Script
+
+A shell script to run the tests (in case you prefer a script over make).
+
+#+BEGIN_SRC sh :tangle parser-test/run_tests.sh
+#!/bin/bash
+
+# Create the directory if it doesn't exist
+mkdir -p parser-test
+
+# Convert all WAT files to WASM
+echo "Converting WAT files to WASM..."
+for wat_file in parser-test/*.wat; do
+  wasm_file="${wat_file%.wat}.wasm"
+  echo "  $wat_file -> $wasm_file"
+  wat2wasm "$wat_file" -o "$wasm_file"
+done
+
+# Run the parser on each WASM file
+echo -e "\nRunning parser tests..."
+success=true
+
+for wasm_file in parser-test/*.wasm; do
+  echo -n "Testing $wasm_file: "
+  if ./parser "$wasm_file" > /dev/null 2>&1; then
+    echo -e "\033[0;32mPASS\033[0m"
+  else
+    echo -e "\033[0;31mFAIL\033[0m (return code: $?)"
+    success=false
+  fi
+done
+
+# Print summary
+echo ""
+if $success; then
+  echo -e "\033[0;32mAll tests passed!\033[0m"
+  exit 0
+else
+  echo -e "\033[0;31mSome tests failed.\033[0m"
+  exit 1
+fi
+#+END_SRC

@@ -14,10 +14,15 @@ Functions:
 
 Types:
 - ~Module~: A structure containing parsed module data such as functions, global variables, tables, and memory.
+  After parsing via ParseModule, it is passed to LoadModule or used directly to access module components (e.g., to call functions or read memory).
 - ~FuncType~: Description of the function type (parameters and return values).
+  Used to interpret or compile functions from Module to understand what arguments to pass and what to expect in the output.
 - ~GlobalType~: Global variable type (value and modifiability).
+  Used to initialize global variables in runtime or to read/write them at runtime.
 - ~TableType~: Type of table (for example, for storing pointers to functions).
+  Used to work with tables in runtime, for example, to call functions by index.
 - ~MemoryType~: Type of linear memory (minimum and maximum size).
+  Used to allocate and manage module memory in runtime.
 
 * Internal parser components
 
@@ -40,8 +45,10 @@ Functions:
 
 Types:
 
-~Section~: An internal structure for representing module sections.
-~Instruction~: A structure for representing Wasm instructions.
+- ~Section~: An internal structure for representing module sections.
+  Used only inside section parsing functions.
+- ~Instruction~: A structure for representing Wasm instructions.
+  Used when parsing a code section to temporarily store instructions.
 
 * Sequence of calls when parsing a Wasm file
 
