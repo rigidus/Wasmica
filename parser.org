@@ -96,3 +96,170 @@ The types ~Module~, ~FuncType~, ~GlobalType~, ~TableType~, ~MemoryType~ should a
 Section parsing functions (~ParseFunctionSection~, ~ParseCodeSection~, etc.) can be encapsulated since they are only called from ParseSection.
 
 Utility functions (~ReadLebUnsigned~, ~ReadLebSigned~) can also be hidden as they are used only inside the parser.
+
+* Parsing process
+
+Let's say we have a minimal wat-file:
+
+#+BEGIN_SRC lisp
+  (module
+   (type $t0 (func))
+   (func $empty (type $t0))
+   (export "empty" (func $empty))
+   )
+#+END_SRC
+
+After the wat2wasm transformation, it will take this form:
+
+#+BEGIN_SRC text
+  00 61 73 6d 01 00 00 00  ; Magic number and version
+  01 04 01 60 00 00        ; Section of types: 1 тип, func wthout params and return
+  03 02 01 00              ; Section of functions: 1 func with type 0
+  07 09 01 05 65 6d 70 74  ; Section of export: 1 export "empty", func idx 0
+  79 00
+  0a 04 01 02 00 0b        ; Section of code: 1 func, body: empty (end)
+#+END_SRC
+
+** ParseModule
+
+The ~ParseModule~ function is the entry point for parsing WASM bytecode. It:
+- Initializes the ~Module~ structure.
+- Checks the magic number (0x00 0x61 0x73 0x6d) and version (0x01 0x00 0x00 0x00 0x00 0x00).
+- Reads sections by calling internal functions to process them.
+
+ParseModule sequence:
+- Initialize ~Module~: Creates a ~Module~ structure that will contain all module data (functions, types, exports, etc.).
+- Read Header: Auxiliary functions like Read_u8 are used to check the magic number and version.
+- Cycle through sections: ParseSection is called for each section, passing it the section ID and a pointer to the bytes.
+
+** ParseSection
+
+The ParseSection function determines the type of a section by its ID and calls the corresponding parsing function:
+
+- Section Types (ID 1): ParseSection_Type
+- Function section (ID 3): ParseSection_Function
+- Export Section (ID 7): ParseSection_Export
+- Code Section (ID 10): ParseSection_Code
+- ...
+
+*** Type section (ID 1: 01 04 01 60 00 00 00)
+
+Call: ParseSection_Type
+
+Actions:
+- Reads the number of types (ReadLEB_u32 → 1).
+- Reads the type (Read_u8 → 0x60 means func).
+- Reads the number of parameters (ReadLEB_u32 → 0) and return values (ReadLEB_u32 → 0).
+- Creates a FuncType using AllocFuncType and stores it in Module->funcTypes.
+
+Result: The type $t0 (function without parameters and return) is added to Module->funcTypes.
+
+*** Function Section (ID 3: 03 02 01 01 00)
+
+Call: ParseSection_Function
+
+Actions:
+- Reads the number of functions (ReadLEB_u32 → 1).
+- Reads the type index for each function (ReadLEB_u32 → 0).
+- Creates a Module->functions array and associates the function with type $t0.
+
+Result: One function with type $t0 appears in Module->functions.
+
+
+*** Export Section (ID 7: 07 09 01 01 05 65 6d 70 74 79 00)
+
+Call: ParseSection_Export
+
+Actions:
+- Reads the number of exports (ReadLEB_u32 → 1).
+- Reads the name length (ReadLEB_u32 → 5), name (Read_utf8 → “empty”), export type (Read_u8 → 0 for function) and index (ReadLEB_u32 → 0).
+- Saves the export to Module->exports, associating the name “empty” with the function at index 0.
+
+Result: The “empty” export for the $empty function is added to Module->exports.
+
+*** Code section (ID 10: 0a 04 01 01 02 00 00 0b)
+
+Call: ParseSection_Code
+
+Actions:
+- Reads the number of functions (ReadLEB_u32 → 1).
+- Reads the size of the function body (ReadLEB_u32 → 2).
+- Reads local variables (ReadLEB_u32 → 0, no local variables).
+- Reads bytecode (0x00 0x0b - empty body with end instruction).
+- Saves bytecode to Module->functions[0].wasm.
+
+Result: An empty bytecode (0x00 0x0b) is written to Module->functions[0].
+
+** Completion of ParseModule
+
+After all sections have been processed, ~ParseModule~ returns a populated ~Module~ structure containing:
+- funcTypes: One type $t0.
+- functions: One function $empty with type $t0 and an empty body.
+- exports: Export “empty” for function $empty.
+
+After parsing, the external code calls ~LoadModule~ to load the module into the runtime
+
+* Source code
+
+Header file for the external interface of the parser.
+
+#+BEGIN_SRC c
+  // External declarations
+  typedef struct Module Module;
+  typedef struct FuncType FuncType;
+  typedef struct Global GlobalType;
+  typedef struct TableType TableType;
+  typedef struct MemoryType MemoryType;
+
+  // External parser functions
+  Result ParseModule(IEnvironment i_environment, Module **o_module, const uint8_t *const i_wasmBytes, uint32_t i_numWasmBytes);
+  Result LoadModule(IM4Runtime io_runtime, Module *io_module);
+#+END_SRC
+
+Parser implementation, including front-end and back-end functions.
+
+#+BEGIN_SRC c
+  // External func implementations
+  Result ParseModule(IEnvironment i_environment, Module **o_module, const uint8_t *const i_wasmBytes, uint32_t i_numWasmBytes) { /* ... */ }
+  Result LoadModule(IM4Runtime io_runtime, Module *io_module) { /* ... */ }
+
+  // Internal functions (static)
+  static Result ReadLebUnsigned(u64 *o_value, u32 i_maxNumBits, bytes_t *io_bytes, cbytes_t i_end) { /* ... */ }
+  static Result ReadLebSigned(i64 *o_value, u32 i_maxNumBits, bytes_t *io_bytes, cbytes_t i_end) { /* ... */ }
+  static Result ParseSection(/* ... */) { /* ... */ }
+  static Result ParseSection_Type(/* ... */) { /* ... */ }
+  static Result ParseSection_Function(/* ... */) { /* ... */ }
+  static Result ParseSection_Export(/* ... */) { /* ... */ }
+  static Result ParseSection_Code(/* ... */) { /* ... */ }
+  // Another sections: ParseSection_Global, ParseSection_Table, etc.
+
+  // Aixialary funcs
+  static Result AllocFuncType(FuncType **o_functionType, u32 i_numTypes) { /* ... */ }
+#+END_SRC
+
+Definitions of the data structures used by the parser and external code.
+
+#+BEGIN_SRC c
+  struct FuncType {
+      struct FuncType *next;
+      u16 numRets;
+      u16 numArgs;
+      u8 types[];
+  };
+
+  struct Global { // GlobalType
+  };
+
+  struct TableType {
+  };
+
+  struct MemoryType {
+  };
+
+  struct Module {
+
+      FuncType *funcTypes;
+      Function *functions;
+      // [TODO]: globals, tables, memory, exports, etc.
+  };
+#+END_SRC

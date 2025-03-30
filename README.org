@@ -16,6 +16,7 @@ We will start with the overall structure and then dive into the details of each 
 
 The project consists of several key components, each responsible for its own part of working with WebAssembly:
 - ~Wasm Parser~ ([[file:parser.org][parser.org]]): parses bytecode and builds an internal representation.
+  - ~Parser Tests~ ([[file:parser-test.org][parser-test.org]]): A temporary parser testing subsystem that will later test the entire project
 - ~Interpreter~: executes Wasm code step by step.
 - ~JIT compiler~: speeds up execution through dynamic compilation.
 - ~Runtime~: manages memory and interaction with the host system.
