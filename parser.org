@@ -263,3 +263,292 @@ Definitions of the data structures used by the parser and external code.
       // [TODO]: globals, tables, memory, exports, etc.
   };
 #+END_SRC
+
+* Main
+
+#+BEGIN_SRC c :noweb yes :tangle src/parser.c
+
+  #include <stdio.h>
+  #include <stdint.h>
+  #include <stdlib.h>
+  #include <stdbool.h>
+  #include <stdint.h>
+  #include <stddef.h>
+  #include <string.h>
+  #include <inttypes.h>
+  #include <time.h>
+  #include <limits.h>
+  #include <stdarg.h>
+  #include <ctype.h>
+  #include <math.h>
+
+  <<Types>>
+  <<Errors>>
+
+  <<print_usage>>
+  <<err_handler>>
+
+  #define ARGV_SHIFT()  { i_argc--; i_argv++; }
+  #define ARGV_SET(x)   { if (i_argc > 0) { x = i_argv[0]; ARGV_SHIFT(); } }
+
+  int  main  (int i_argc, const char* i_argv[])
+  {
+      Result result = Err_none;
+
+      const char* argFile = NULL;
+      const char* argFunc = "_start";
+
+      ARGV_SHIFT(); // Skip executable name
+
+      while (i_argc > 0)
+      {
+          const char* arg = i_argv[0];
+          if (arg[0] != '-') break;
+
+          ARGV_SHIFT();
+
+          if (!strcmp("--fun", arg)) {
+              ARGV_SET(argFunc);
+          } else if (!strcmp("--err", arg)) {
+              if (i_argc < 1) {
+                  print_usage();
+                  return err_handler(ErrEntry_missing_cli_arg_for_err);
+              }
+              const char *code_str = i_argv[0];
+              ARGV_SHIFT();
+
+              char *end;
+              long code = strtol(code_str, &end, 10);
+              if (*end != '\0' ||
+                  code < 0 ||
+                  code > (sizeof(err_code_map) / sizeof(err_code_map[0])) )
+              {
+                  print_usage();
+                  return err_handler(ErrEntry_out_of_range_err_arg);
+              }
+
+              const char *message = NULL;
+              for (size_t i = 0;
+                   i < sizeof(err_code_map)/sizeof(err_code_map[0]); i++) {
+                  if (err_code_map[i]->code == (int)code) {
+                      message = err_code_map[i]->error;
+                      break;
+                  }
+              }
+              if (message) {
+                  printf("%s\n", message);
+              } else {
+                  printf("Unknown error code: %ld\n", code);
+              }
+              return ErrEntry_none.code;
+          } else {
+              print_usage();
+              return err_handler(ErrEntry_unknown_cli_param);
+          }
+      }
+
+      if (i_argc < 1) {
+          print_usage();
+          return err_handler(ErrEntry_no_file);
+      }
+
+      ARGV_SET(argFile);
+
+      /* TODO */
+      /* ... */
+
+      return ErrEntry_none.code;
+  }
+#+END_SRC
+
+** Possible command line errors
+
+*** Missing command line argument for --err
+
+This error occurs when the required argument for the --err parameter is missing
+
+#+BEGIN_SRC elisp :noweb-ref add_err :session err :results output
+  (add-to-list 'err-list
+               (cons "missing_cli_arg_for_err"
+                     "\"--err requires an error code\""))
+#+END_SRC
+
+
+*** Out of range --err argument
+
+#+BEGIN_SRC elisp :noweb-ref add_err :session err :results output
+  (add-to-list 'err-list
+               (cons "out_of_range_err_arg"
+                     "\"Out of range --err argument\""))
+#+END_SRC
+
+*** No file for processing
+
+#+BEGIN_SRC elisp :noweb-ref add_err :session err :results output
+  (add-to-list 'err-list
+               (cons "no_file"
+                     "\"No file for processing\""))
+#+END_SRC
+
+*** Unknown command line parameter
+
+#+BEGIN_SRC elisp :noweb-ref add_err :session err :results output
+  (add-to-list 'err-list
+               (cons "unknown_cli_param"
+                     "\"Unknown command line parameter\""))
+#+END_SRC
+
+
+* Errors
+
+Here we define ERR_STR, and that means that constants will be _defined_ later in this module. In other modules where ERR_STR is not defined, constants will be _declared_. This method will be used if we later want to put the constant definitions in a separate translation module.
+
+Dependency (types):
+- Result
+- ErrCodeEntry
+
+It also uses the X-Macro technique to avoid code duplication. Its idea is to describe all errors once in a single macro-list and then “expand” this list into:
+- Error variable declarations (err_*, ErrEntry_*).
+- An array for searching errors (err_code_map).
+
+#+BEGIN_SRC c :noweb yes :noweb-ref Errors
+
+  // ::: Errors
+  # define ERR_STR
+
+  # if defined(ERR_STR)
+  #   define DEF_ERR(NUM, LBL, MSG) const Result Err_##LBL = { MSG }; \
+      static const struct ErrCodeEntry ErrEntry_##LBL = { NUM, Err_##LBL };
+  # else
+  #   define DEF_ERR(NUM, LBL, MSG) extern const Result Err_##LBL; \
+      extern const struct ErrCodeEntry ErrEntry_##LBL;
+  # endif
+
+  <<err_list_init()>>
+  // Generated Error List
+  <<gen_err_list()>>
+
+  // Errors declaration
+  #define X(LBL, MSG) const Result Err_##LBL = { MSG };			\
+      static const ErrCodeEntry ErrEntry_##LBL = { __COUNTER__, Err_##LBL };
+  ERROR_LIST
+  #undef X
+
+  // Array off errors
+  #define X(LBL, MSG) &ErrEntry_##LBL,
+  static const ErrCodeEntry *err_code_map[] = {
+      ERROR_LIST
+  };
+  #undef X
+
+  // Function for retrieving an error by its code
+  Result get_err_msg(int code) {
+      for (size_t i = 0;
+           i < sizeof(err_code_map) / sizeof(err_code_map[0]); i++) {
+          if (err_code_map[i]->code == code) {
+              return err_code_map[i]->error;
+          }
+      }
+      return "Unknown error code";
+  }
+#+END_SRC
+
+Say, if we have such a list of errors
+
+#+BEGIN_SRC c
+  #define ERROR_LIST											\
+      X(none, 0, NULL)											\
+      X(invalid_cli_params, 1, "Invalid command-line params")
+#+END_SRC
+
+After preprocessing, the code will turn into:
+
+#+BEGIN_SRC c
+  const Result Err_none = { NULL };
+  static const ErrCodeEntry ErrEntry_none = { 0, Err_none };
+  ...
+  const Result Err_invalid_cli_params = { "Invalid command-line params" };
+  static const ErrCodeEntry ErrEntry_invalid_cli_params = { 1, Err_invalid_cli_params };
+  ...
+  static const ErrCodeEntry *err_code_map[] = {
+      &ErrEntry_none,
+      &ErrEntry_invalid_cli_params,
+      ...
+  };
+#+END_SRC
+
+The next level of metaprogramming is to generate the ERROR_LIST dynamically, for which we organize the "err" session and arrange the org-code-blocks so that they reference "err_list_init" and "gen_err_list". This will insert all error definitions at the end of err_list_init:
+
+#+NAME: err_list_init
+#+BEGIN_SRC elisp :noweb yes :session err :results output
+  (when (boundp 'err-list)
+    (makunbound 'err-list))
+  (unless (boundp 'err-list)
+    (progn
+      (defvar err-list nil "List of errors for ERROR_LIST macro.")
+      (setf err-list nil)
+      (add-to-list 'err-list (cons "none" "NULL")) t))
+  <<add_err>>
+#+END_SRC
+
+This procedure collects all accumulated errors and generates the necessary c-code:
+
+#+NAME: gen_err_list
+#+BEGIN_SRC elisp :session err :results value
+  (concat "#define ERROR_LIST \\\n"
+          (mapconcat
+           (lambda (err)
+             (format "    X(%s, %s)" (car err) (cdr err)))
+           (reverse err-list)
+           " \\\n")
+          "\n")
+#+END_SRC
+
+And in order to add another error, we only need to add it to the list (pay attention to the session in the headers and the fact that such a block must necessarily refer to ADD_REF:
+
+#+BEGIN_SRC elisp :noweb-ref add_err :session err :results output
+  (add-to-list 'err-list
+               (cons "unknown" "\"Unknown error\""))
+#+END_SRC
+
+
+** Result
+
+#+BEGIN_SRC c :noweb-ref Types
+
+  typedef const char * Result;
+#+END_SRC
+
+** ErrCodeEntry
+
+#+BEGIN_SRC c :noweb-ref Types
+
+  typedef struct ErrCodeEntry {
+      int code;
+      Result error;
+  } ErrCodeEntry;
+#+END_SRC
+
+** Print usage
+
+Since we have a function to retrieve an error by its code we can now tell the user the error if they request it on the command line. For example, if the program returned an error code on the previous run.
+
+#+BEGIN_SRC c :noweb-ref print_usage
+
+  void print_usage() {
+      puts("Usage:");
+      puts("  parser [options] <file> [args...]");
+      puts("Options:");
+      puts("  --err <num_err_code>");
+      puts("  --fun <function>  function to run default: _start");
+  }
+#+END_SRC
+
+** ErrHandler
+
+#+BEGIN_SRC c :noweb-ref err_handler
+  int err_handler(ErrCodeEntry param) {
+      fprintf(stderr, "\nError (%d): %s \n", param.code, param.error);
+      return param.code;
+  }
+#+END_SRC
