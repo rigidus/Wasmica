@@ -165,7 +165,6 @@ Actions:
 
 Result: One function with type $t0 appears in Module->functions.
 
-
 *** Export Section (ID 7: 07 09 01 01 05 65 6d 70 74 79 00)
 
 Call: ParseSection_Export
@@ -284,6 +283,7 @@ Definitions of the data structures used by the parser and external code.
 
   <<Types>>
   <<Errors>>
+  <<Exceptions>>
 
   <<print_usage>>
   <<err_handler>>
@@ -373,7 +373,6 @@ This error occurs when the required argument for the --err parameter is missing
                      "\"--err requires an error code\""))
 #+END_SRC
 
-
 *** Out of range --err argument
 
 #+BEGIN_SRC elisp :noweb-ref add_err :session err :results output
@@ -397,7 +396,6 @@ This error occurs when the required argument for the --err parameter is missing
                (cons "unknown_cli_param"
                      "\"Unknown command line parameter\""))
 #+END_SRC
-
 
 * Errors
 
@@ -511,7 +509,6 @@ And in order to add another error, we only need to add it to the list (pay atten
                (cons "unknown" "\"Unknown error\""))
 #+END_SRC
 
-
 ** Result
 
 #+BEGIN_SRC c :noweb-ref Types
@@ -551,4 +548,136 @@ Since we have a function to retrieve an error by its code we can now tell the us
       fprintf(stderr, "\nError (%d): %s \n", param.code, param.error);
       return param.code;
   }
+#+END_SRC
+
+* Exceptions
+
+The exception mechanism uses a combination of macros and goto-based control flows to simulate try-catch behavior, which is not natively supported in C.
+
+The design focuses on:
+- Simplicity: Using minimal runtime overhead.
+- Flexibility: Applicable to any C project with proper integration.
+
+Usage Example demonstrates a simple use case with a function that might fail (we want to ensure that this kind of code can work:):
+
+#+BEGIN_SRC c
+  Result might_fail_fn (uint32_t size, uint32_t idx, uint32_t tbl[])
+  {
+      _try {
+          if (idx >= size) {
+              _throw ("index out of range");
+          }
+          uint32_t elt = tbl[idx];
+          _ (process_element(elt))
+      }
+  _catch:
+      return result;
+  }
+#+END_SRC
+
+To do so, by exposing macros it must be converted to this code:
+
+#+BEGIN_SRC c
+  Result might_fail_fn (uint32_t size, uint32_t idx, uint32_t tbl[])
+  {
+      Result result = Err_none;
+      {
+          if (idx >= size) {
+              result = "index out of range";
+              EXCEPTION_PRINT (result);
+              goto _catch;
+          }
+          uint32_t elt = tbl[idx];
+          result = process_element(elt);
+          if (UNLIKELY(result)) {
+              EXCEPTION_PRINT (result);
+              goto _catch;
+          }
+      }
+  _catch:
+      return result;
+  }
+#+END_SRC
+
+Thus, we will only need a few macros and one function for implementation:
+
+#+BEGIN_SRC c :noweb yes :noweb-ref Exceptions
+  <<un__likely>>
+
+  #define _try  Result result = Err_none;
+  #define _(TRY)  { result = TRY; if (UNLIKELY(result)) { EXCEPTION_PRINT (result); goto _catch; } }
+  #define _throw(ERROR)  { result = ERROR; EXCEPTION_PRINT (result); goto _catch; }
+  #define _throwif(ERROR, COND)  if (UNLIKELY(COND)) { _throw(ERROR); }
+  #define _throwifnull(PTR) _throwif (Err_mallocFailed, !(PTR))
+
+  void ExceptionBreakpoint (char* i_exception, char* i_message)
+  {
+      printf ("\nexception: '%s' @ %s\n", i_exception, i_message);
+      return;
+  }
+
+  <<stringify>>
+
+  #define EXCEPTION_PRINT(ERROR) ExceptionBreakpoint (ERROR, (__FILE__ ":" STRINGIFY(__LINE__)))
+#+END_SRC
+
+Dependency: Since the default value of ~Result~ is ~Err_none~, the exception mechanism depends on [[*Errors][Errors]].
+
+** Stringify
+
+#+BEGIN_SRC c :noweb-ref stringify
+  #define STRINGIFY__(x) #x
+#+END_SRC
+
+The ~#~ operator in the C preprocessor is a special tool that "stringifies" its argument. This means it takes whatever ~x~ is and wraps it in double quotes to make a string literal. When you use STRINGIFY__(abc), the preprocessor replaces ~x~ with ~abc~ and the ~#~ turns it into ~"abc"~.
+
+#+BEGIN_SRC c
+  STRINGIFY__(hello) → "hello"
+  STRINGIFY__(123)   → "123"
+#+END_SRC
+
+Key point: This macro works directly on the argument you pass. If you give it a macro like __LINE__ (which represents the current line number), it won’t expand ~__LINE__~ -it will just stringify it as ~"__LINE__"~. That’s where the next macro comes in.
+
+#+BEGIN_SRC c :noweb-ref stringify
+  #define STRINGIFY(x) STRINGIFY__(x)
+#+END_SRC
+
+This macro calls ~STRINGIFY__~ with the argument ~x~. At first glance, it might seem redundant - why not just use ~STRINGIFY__~ directly? The trick is that this extra step ensures any macros passed as arguments get expanded before stringification happens.
+
+Why it is needed: In C, if you pass a macro (like ~__LINE__~) directly to ~#~, the preprocessor doesn’t expand it - it just stringifies the macro’s name. But if you wrap it in another macro like ~STRINGIFY~, the preprocessor expands the argument first, then passes it to STRINGIFY__ for stringification.
+
+How it works:
+- You write STRINGIFY(__LINE__).
+- Suppose ~__LINE__~ is 42 (the current line number). The preprocessor expands ~__LINE__~ to ~42~.
+- Then ~STRINGIFY(42)~ becomes ~STRINGIFY__(42)~.
+- Finally, STRINGIFY__(42) uses ~#~ to turn ~42~ into ~"42"~.
+
+** (Un)Likely
+
+The LIKELY and UNLIKELY macros are used to provide the compiler with branch prediction hints. These hints help optimize code execution in performance-critical sections by indicating which conditions are most likely to be true or false. The implementation of macros depends on the compiler used: for GCC, Clang and ICC the built-in ~__builtin_expect~ function is used, while for other compilers macros simply return the original expression.
+
+This allows the compiler to optimize the code by placing the "improbable" branch in a way that minimizes delays in the processor pipeline.
+
+The ~!!~ operator converts any value to a boolean value (0 or 1), which is required for a ~__builtin_expect~.
+
+#+BEGIN_SRC c :noweb-ref un__likely
+  # if defined(__clang__)
+  #  define COMPILER_CLANG 1
+  # elif defined(__INTEL_COMPILER)
+  #  define COMPILER_ICC 1
+  # elif defined(__GNUC__) || defined(__GNUG__)
+  #  define COMPILER_GCC 1
+  # elif defined(_MSC_VER)
+  #  define COMPILER_MSVC 1
+  # else
+  #  warning "Compiler not detected"
+  # endif
+
+  # if defined(COMPILER_GCC) || defined(COMPILER_CLANG) || defined(COMPILER_ICC)
+  #  define UNLIKELY(x) __builtin_expect(!!(x), 0)
+  #  define LIKELY(x)   __builtin_expect(!!(x), 1)
+  # else
+  #  define UNLIKELY(x) (x)
+  #  define LIKELY(x)   (x)
+  # endif
 #+END_SRC
