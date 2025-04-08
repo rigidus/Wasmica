@@ -281,6 +281,15 @@ Definitions of the data structures used by the parser and external code.
   #include <ctype.h>
   #include <math.h>
 
+  typedef uint64_t        u64;
+  typedef int64_t         i64;
+  typedef uint32_t        u32;
+  typedef int32_t         i32;
+  typedef uint16_t        u16;
+  typedef int16_t         i16;
+  typedef uint8_t         u8;
+  typedef int8_t          i8;
+
   <<Types>>
   <<Errors>>
   <<Exceptions>>
@@ -288,8 +297,43 @@ Definitions of the data structures used by the parser and external code.
   <<print_usage>>
   <<err_handler>>
 
+  struct Runtime;
+  typedef struct Runtime * IRuntime;
+
+  struct Environment;
+  typedef struct Environment * IEnvironment;
+
+  struct Module;
+  typedef struct Module * IModule;
+
+  struct Function;
+  typedef struct Function * IFunction;
+
+  typedef void * (* ModuleVisitor) (IModule i_module, void * i_info);
+
+  typedef struct ImportInfo
+  {
+    const char *    moduleUtf8;
+    const char *    fieldUtf8;
+  } ImportInfo, * IImportInfo;
+
+
+  #define MAX_MODULES     16
+
+  // -- globs
+  static IRuntime runtime;
+  static IEnvironment env;
+  static u8* wasm_bins[MAX_MODULES];
+  int wasm_bins_qty = 0;
+
+  <<repl_init>>
+
+  <<repl_load>>
+
   #define ARGV_SHIFT()  { i_argc--; i_argv++; }
   #define ARGV_SET(x)   { if (i_argc > 0) { x = i_argv[0]; ARGV_SHIFT(); } }
+
+  #define FATAL(msg, ...) { fprintf(stderr, "Error: [Fatal] " msg "\n", ##__VA_ARGS__); goto _onfatal; }
 
   int  main  (int i_argc, const char* i_argv[])
   {
@@ -297,6 +341,7 @@ Definitions of the data structures used by the parser and external code.
 
       const char* argFile = NULL;
       const char* argFunc = "_start";
+      unsigned argStackSize = 64*1024;
 
       ARGV_SHIFT(); // Skip executable name
 
@@ -354,14 +399,30 @@ Definitions of the data structures used by the parser and external code.
 
       ARGV_SET(argFile);
 
-      /* TODO */
-      /* ... */
+      _( repl_init(argStackSize) )
+      if (result) FATAL("repl_init: %s", result);
+
+      if (argFile) {
+          result = repl_load(argFile);
+          if (result) FATAL("repl_load: %s", result);
+      }
 
       return ErrEntry_none.code;
+
+  _catch:
+      return 0;
+
+  _onfatal:
+      if (result) {
+          fprintf (stderr, "Error: %s", result);
+          fprintf (stderr, "\n");
+      }
+
+      return result ? 1 : 0;
   }
 #+END_SRC
 
-** Possible command line errors
+** Possible errors
 
 *** Missing command line argument for --err
 
@@ -395,6 +456,84 @@ This error occurs when the required argument for the --err parameter is missing
   (add-to-list 'err-list
                (cons "unknown_cli_param"
                      "\"Unknown command line parameter\""))
+#+END_SRC
+
+** repl_load
+
+#+BEGIN_SRC c :noweb yes :noweb-ref repl_load
+  <<parse_module>>
+
+  Result repl_load  (const char* fn)
+  {
+      FILE* f = NULL;
+      _try {
+          IModule module = NULL;
+
+          u8* wasm = NULL;
+          u32 fsize = 0;
+
+          f = fopen (fn, "rb");
+          _throwif(Err_cannot_open_file, !f);
+
+          fseek (f, 0, SEEK_END);
+          fsize = ftell(f);
+          fseek (f, 0, SEEK_SET);
+
+          _throwif(Err_file_too_small, fsize < 8);
+          _throwif(Err_file_too_big, fsize > 256 * 1024 * 1024);
+
+          wasm = (u8*) malloc(fsize);
+          _throwifnull(wasm);
+
+          _throwif(Err_cannot_read_file, fread(wasm, 1, fsize, f) != fsize);
+          fclose(f);
+          f = NULL;
+
+          _ (parse_module (env, &module, wasm, fsize));
+
+          if (wasm_bins_qty < MAX_MODULES) {
+              wasm_bins[wasm_bins_qty++] = wasm;
+          }
+
+          return result;
+      }
+  _catch:
+      if (f) fclose(f);
+      return result;
+  }
+#+END_SRC
+
+#+BEGIN_SRC elisp :noweb-ref add_err :session err :results output
+  (add-to-list 'err-list
+               (cons "cannot_open_file" "\"Cannot open file\""))
+  (add-to-list 'err-list
+               (cons "file_too_small" "\"File is too small\""))
+  (add-to-list 'err-list
+               (cons "file_too_big" "\"File is too big\""))
+  (add-to-list 'err-list
+               (cons "cannot_read_file" "\"cannot_read_file\""))
+#+END_SRC
+
+** REPL
+
+
+#+BEGIN_SRC c :noweb yes :noweb-ref repl_init
+
+
+  Result repl_init (unsigned stack) {
+      // repl_free();
+      // runtime = NewRuntime (env, stack, NULL);
+      if (runtime == NULL) {
+          err_handler(ErrEntry_new_runtime_failed);
+      }
+      return Err_none;
+  }
+#+END_SRC
+
+#+BEGIN_SRC elisp :noweb-ref add_err :session err :results output
+  (add-to-list 'err-list
+               (cons "new_runtime_failed"
+                     "\"Failed to create a new runtime\""))
 #+END_SRC
 
 * Errors
@@ -454,7 +593,7 @@ It also uses the X-Macro technique to avoid code duplication. Its idea is to des
 Say, if we have such a list of errors
 
 #+BEGIN_SRC c
-  #define ERROR_LIST											\
+  #define ERROR_LIST												\
       X(none, 0, NULL)											\
       X(invalid_cli_params, 1, "Invalid command-line params")
 #+END_SRC
@@ -485,7 +624,9 @@ The next level of metaprogramming is to generate the ERROR_LIST dynamically, for
     (progn
       (defvar err-list nil "List of errors for ERROR_LIST macro.")
       (setf err-list nil)
-      (add-to-list 'err-list (cons "none" "NULL")) t))
+      (add-to-list 'err-list (cons "none" "NULL"))
+      (add-to-list 'err-list (cons "malloc_failed" "\"Cannot allocate memory\""))
+      t))
   <<add_err>>
 #+END_SRC
 
@@ -602,23 +743,24 @@ To do so, by exposing macros it must be converted to this code:
 Thus, we will only need a few macros and one function for implementation:
 
 #+BEGIN_SRC c :noweb yes :noweb-ref Exceptions
+
   <<un__likely>>
+
+  <<stringify>>
+
+  #define EXCEPTION_PRINT(ERROR) ExceptionBreakpoint ((char*)ERROR, (__FILE__ ":" STRINGIFY(__LINE__)))
 
   #define _try  Result result = Err_none;
   #define _(TRY)  { result = TRY; if (UNLIKELY(result)) { EXCEPTION_PRINT (result); goto _catch; } }
   #define _throw(ERROR)  { result = ERROR; EXCEPTION_PRINT (result); goto _catch; }
   #define _throwif(ERROR, COND)  if (UNLIKELY(COND)) { _throw(ERROR); }
-  #define _throwifnull(PTR) _throwif (Err_mallocFailed, !(PTR))
+  #define _throwifnull(PTR) _throwif (Err_malloc_failed, !(PTR))
 
   void ExceptionBreakpoint (char* i_exception, char* i_message)
   {
       printf ("\nexception: '%s' @ %s\n", i_exception, i_message);
       return;
   }
-
-  <<stringify>>
-
-  #define EXCEPTION_PRINT(ERROR) ExceptionBreakpoint (ERROR, (__FILE__ ":" STRINGIFY(__LINE__)))
 #+END_SRC
 
 Dependency: Since the default value of ~Result~ is ~Err_none~, the exception mechanism depends on [[*Errors][Errors]].
