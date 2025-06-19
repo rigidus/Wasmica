@@ -1,4 +1,4 @@
-# Ignore test build and log directoryes
+# Ignore test build and log directories
 ./tests/build/*
 ./tests/logs/*
 

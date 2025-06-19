@@ -248,7 +248,7 @@ fi
 A sample .gitignore file that excludes the build and logs directories.
 
 #+BEGIN_SRC text :tangle .gitignore
-# Ignore test build and log directoryes
+# Ignore test build and log directories
 ./tests/build/*
 ./tests/logs/*
 
