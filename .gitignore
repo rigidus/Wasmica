@@ -6,3 +6,7 @@
 ./tests/*.wat
 ./tests/Makefile
 ./tests/run_tests.sh
+
+# Ignore build artifacts
+src/parser
+src/*.o
