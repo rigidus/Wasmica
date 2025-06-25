@@ -224,7 +224,7 @@ for wasm_file in "$WASM_DIR"/*.wasm; do
   echo -n "Testing $base_name: "
   log_file="$TEST_LOGS/${base_name%.wasm}.log"
 
-  if ./parser "$wasm_file" > "$log_file" 2>&1; then
+  if ../parser "$wasm_file" > "$log_file" 2>&1; then
     echo -e "${GREEN}PASS${NC}"
   else
     echo -e "${RED}FAIL${NC} (return code: $?)"
